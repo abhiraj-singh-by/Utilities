@@ -1,3 +1,7 @@
+// Utility to extract table name from any SQL query.
+// Works for complex SQL queries.
+// Disclaimer: Functionality to extract from Create SQL query is not added.
+
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.regex.Matcher;
