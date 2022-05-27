@@ -1,0 +1,199 @@
+# VALID FOR OLD DEV / SANDBOX
+spring:
+  main:
+    allow-circular-references: true # https://github.com/springdoc/springdoc-openapi/issues/1347
+  profiles:
+    active: ${ENVIRONMENT_VARIABLE_BULK_INGESTION_ENVIRONMENT}-${ENVIRONMENT_VARIABLE_BULK_INGESTION_REGION}-${ENVIRONMENT_VARIABLE_BULK_INGESTION_INSTANCE}
+  application:
+    name: jdp-bulk-processor
+  cloud:
+    config:
+      enabled: false
+  mvc:
+    static-path-pattern: /v1/swagger/**
+  jmx:
+    enabled: true
+  kafka:
+    bootstrap-servers: evhn-jdp-jda-sbx-01.servicebus.windows.net:9093
+    properties:
+      sasl.mechanism: PLAIN
+      security.protocol: SASL_SSL
+      # heartbeat.interval.ms: 3000 # DO NOT CHANGE: https://github.com/Azure/azure-event-hubs-for-kafka/blob/master/CONFIGURATION.md
+      session.timeout.ms: 30000 # 10s is kafka default, EH recommends 30s
+
+      #
+      # fetch/consume only 1 event at a time, give processing loop 1.5h before considering processing loop dead
+      #
+      max.poll.interval.ms: 5400000 # 1.5 h
+      max.poll.records: 1 # only fetch a single event at a time, processing an event takes > 10 secs, fetch time doesn't matter
+      retries: 10
+      max.in.flight.requests.per.connection: 1
+      acks: all
+
+    consumer:
+      group-id: $Default
+    listener:
+      ack-mode: MANUAL_IMMEDIATE
+    datasource:
+      dataSourceProperties:
+        snowflake: someSnow
+
+  liquibase:
+    enabled: false
+
+logging:
+  level:
+    root: INFO
+    org.apache.kafka: INFO
+    com.by.dp.bulkprocessor.processor.BlobEventProcessor: DEBUG
+
+ignite:
+  ipFinderImpl: kubernetes
+
+server:
+  port: ${PORT:8080}
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,application/javascript,application/json
+
+luminate:
+  application:
+    component: bulk-ingester-service
+    service: product-service
+
+oauth2:
+  jwt:
+    key: 123
+  jwk:
+    microsoft:
+      fetchinterval: 24h
+      appid: b9c6d7a1-7441-40f5-b054-dfa24bd7945e
+
+eh:
+  topic: public.filedrop.bulk.notification
+  concurrency: 1
+
+curation:
+  notification:
+    topic: transform.topic
+    internalTopic: 001-internal-curation-notification
+
+snowflake:
+#  username: ${ENVIRONMENT_VARIABLE_SNOWFLAKE_SA_LPDM_BLKPROC_USERNAME}
+#  password: INVALID
+  username: sa_lpdm_tst_automation_blkproc
+  password: ak*164n%#TmaEJ
+  account: ov40102
+  warehouse: DEV_PLAT_LPDM_SERVICE_ELT_WH
+  mergeWarehouse: DEV_PLAT_LPDM_SERVICE_ELT_WH
+  streamerWarehouse: DEV_PLAT_LPDM_SERVICE_ELT_WH
+  streamerWarehouseIM: DEV_PLAT_LPDM_SERVICE_ELT_WH
+  streamerWarehouseTI: DEV_PLAT_LPDM_SERVICE_ELT_WH
+  db: ${ENVIRONMENT_VARIABLE_SNOWFLAKE_DATABASE_NAME:LPDM_DEV}
+  role: SYSADMIN
+  jdbcUrl: jdbc:snowflake://ov40102.east-us-2.azure.snowflakecomputing.com/
+
+  mergeStageIntoCuratedQueryString: MERGE INTO "%s".%s AS T USING (%s) AS S ON %s WHEN MATCHED %s THEN UPDATE SET %s,T.MESSAGEID='%s',T.MODIFIED_DATETIME=SYSDATE(),T.FILENAME='%s',T.IS_ACTIVE=true WHEN NOT MATCHED THEN INSERT(MESSAGEID, MD5, CREATED_DATETIME, MODIFIED_DATETIME, IS_ACTIVE, %s, FILENAME) VALUES (S.MESSAGEID,S.MD5,SYSDATE(),SYSDATE(), true, %s, '%s')
+  insertRawIntoStagingQueryString: INSERT INTO "%s".STG_%s(%s,MESSAGEID,MD5,FILENAME,FILE_ROW_NUMBER,CREATED_DATETIME,MODIFIED_DATETIME,IS_ACTIVE) SELECT %s,'%s',md5(to_varchar(array_construct(%s))) AS MD5,FILENAME,FILE_ROW_NUMBER,SYSDATE(),SYSDATE(),true FROM "%s".RAW_%s %s WHERE FILENAME = '%s'
+  copyFromStageQueryString: copy into "%s".RAW_%s(INPUT, FILENAME, FILE_ROW_NUMBER, CREATION_DATE) from (select %s, '%s', METADATA$FILE_ROW_NUMBER, SYSDATE() from @"%s".%s) files=('%s') file_format = (type = %s)
+  columnsInPipelineConfigQueryString: show columns in by_metadata.pipeline_config
+  pipelineConfigQueryString: select * from by_metadata.pipeline_config where ENTITY_TYPE='%s' and REALM_ID='%s' and INPUT_BLOB_CONTAINER='%s'
+  metadataForPipelineCongigQueryString: select * from by_metadata.core_model where REALM_ID='%s' and ENTITY_NAME='%s' and INPUT_MODEL_TYPE='%s' and INPUT_MODEL_VERSION='%s' and OUTPUT_MODEL_TYPE='%s' and OUTPUT_MODEL_VERSION='%s'
+  metadataForPipelineCongigCsvQueryString: select * from by_metadata.core_model where REALM_ID='%s' and ENTITY_NAME='%s' and INPUT_MODEL_TYPE='%s' and INPUT_MODEL_VERSION='%s' and COLNUM is not null order by COLNUM asc
+  queryToInsertIntoAckTable: insert into "%s".acks(filename, entity_type, ack_status, abort_error) values ('%s','%s','%s',$$'%s'$$)
+  queryToCopyAckToOkFile: copy into @"%s".%s/%s.OK.csv.gz from (select * from "%s".acks where filename='%s') file_format=(TYPE='CSV') HEADER=TRUE OVERWRITE=TRUE SINGLE=TRUE
+  queryToCopyAckToAbortFile: copy into @"%s".%s/%s.Abort.csv.gz from (select * from "%s".acks where filename='%s') file_format=(TYPE='CSV') HEADER=TRUE OVERWRITE=TRUE SINGLE=TRUE
+
+  createStreamQueryString: create or replace stream "%s".%s on table "%s".%s
+  createStagingTableQueryString: create table "%s".STG_%s IF NOT EXISTS (MESSAGEID VARCHAR(50), md5 string, %s, FILENAME string, FILE_ROW_NUMBER number,CREATED_BY string, CREATED_DATETIME TIMESTAMP_NTZ, MODIFIED_DATETIME TIMESTAMP_NTZ, IS_ACTIVE boolean)
+  createCrtdTableQueryString: create table "%s".CRTD_%s IF NOT EXISTS (MESSAGEID VARCHAR(50), md5 string, %s, FILENAME string, CREATED_BY string, CREATED_DATETIME TIMESTAMP_NTZ, MODIFIED_DATETIME TIMESTAMP_NTZ, IS_ACTIVE boolean)
+  createRawTableQueryString: create TABLE "%s".RAW_%s IF NOT EXISTS (INPUT variant, FILENAME string, FILE_ROW_NUMBER number, CREATION_DATE TIMESTAMP_NTZ)
+  createInputStageQueryString: create or replace stage "%s".%s url='azure://%s' credentials=(azure_sas_token='%s') FILE_FORMAT = (TYPE = '%s')
+
+  pooling:
+    enabled: true
+
+stratosphere:
+  secretsDir: ${STRATOSPHERE_SECRETS_DIR:./}
+  projectName: ${STRATOSPHERE_PROJECT_NAME:prj-jdp-blk-dev-eus2-01}
+  keyVaultName: ${ENVIRONMENT_VARIABLE_STRATOSPHERE_MANAGED_AZURE_KEY_VAULT_NAME:kv-jdp-blk-dev-eus2-01}
+
+secrets:
+  snowflake:
+    dev: snowflake-sa-lpdm-dev-eus2-01-blkproc-password
+    tst: snowflake-sa-lpdm-tst-eus2-01-blkproc-password
+    prd: snowflake-sa-lpdm-prd-euw-01-blkproc-password
+  kafka:
+    dev: jdp-by-dev-eus2-01-global-kafka-saslJaasConfig
+    tst: jdp-by-tst-eus2-01-global-kafka-saslJaasConfig
+    prd: jdp-by-prd-euw-01-global-kafka-saslJaasConfig
+
+env: ${ENVIRONMENT_VARIABLE_BULK_INGESTION_ENVIRONMENT:dev}
+
+stats:
+  fixedDelayInMillis: 300_000
+  enabled: false # taken over by task in snowflake + stored procedure
+
+management:
+  health:
+    db:
+      enabled: false
+  endpoints:
+    enabled-by-default: false
+    web:
+      exposure:
+        include: prometheus, health, loggers
+      base-path: / # needed for health endpoint, will disable discovery page unfortunately
+      path-mapping:
+        health: /dp/bulkprocessor/v1/health
+        prometheus: /metrics
+        loggers: /loggers
+  endpoint:
+    health:
+      enabled: true
+    prometheus:
+      enabled: true
+    loggers:
+      enabled: true
+
+resilience4j.circuitbreaker:
+  instances:
+    bulkProcessorService, viewSpecProcessorService:
+      failureRateThreshold: 50
+      waitDurationInOpenState: 90s
+      permittedNumberOfCallsInHalfOpenState: 10
+      slidingWindowSize: 10
+
+resilience4j.retry:
+  instances:
+    bulkProcessorService, viewSpecProcessorService:
+      maxAttempts: 2
+      waitDuration: 5s
+
+blob:
+  container.folder.name: ${ENVIRONMENT_VARIABLE_BLOB_FOLDER_NAME:processing}
+
+feature:
+  toggle:
+    cisEnabled: true  #CIS flow - True  , Non-CIS flow -False
+
+schemaManagement:
+  enabled: true
+
+retry:
+  lifeCycleEvent:
+    maxAttempts: 3
+    retryWaitDuration: 1000
+    waitTimeOut: 5000
+
+circuitBreaker:
+  lifeCycleEvent:
+    failureRateThreshold: 50
+    waitDurationInOpenState: 60000
+    permittedNumberOfCallsInHalfOpenState: 10
+    slidingWindowSize: 10
+
+lifecycle:
+  status:
+    topic: public.all.ingestion.status
+
